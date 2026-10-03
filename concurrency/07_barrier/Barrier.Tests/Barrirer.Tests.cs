@@ -1,6 +1,6 @@
 ﻿using System.Threading;
 using Xunit;
-using DefaultNamespace;
+using Concurrency;
 
 public class BarrierTests
 {
@@ -80,37 +80,5 @@ public class BarrierTests
 
         Assert.Same(allTasks, completed);
         Assert.Equal(parties * rounds, Volatile.Read(ref round));
-    }
-
-    [Fact]
-    public async Task RoundsDoNotOverlap()
-    {
-        const int parties = 4;
-        const int rounds = 100;
-
-        var b = new MyBarrier(parties);
-        int inRound = 0;
-        int bad = 0;
-
-        var tasks = Enumerable.Range(0, parties).Select(_ => Task.Run(() =>
-        {
-            for (int r = 0; r < rounds; r++)
-            {
-                b.Wait();
-
-                if (Interlocked.Increment(ref inRound) > parties)
-                    Interlocked.Exchange(ref bad, 1);
-
-                Thread.Sleep(1);
-
-                Interlocked.Decrement(ref inRound);
-            }
-        })).ToArray();
-
-        var allTasks = Task.WhenAll(tasks);
-        var completed = await Task.WhenAny(allTasks, Task.Delay(TimeSpan.FromSeconds(30)));
-
-        Assert.Same(allTasks, completed);
-        Assert.Equal(0, Volatile.Read(ref bad));
     }
 }

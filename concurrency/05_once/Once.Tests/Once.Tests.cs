@@ -1,5 +1,5 @@
 ﻿using System.Threading;
-using DefaultNamespace;
+using Concurrency;
 using Xunit;
 
 public class OnceTests

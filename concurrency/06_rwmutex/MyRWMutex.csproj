@@ -8,6 +8,9 @@
 
     <ItemGroup>
         <Compile Include="MyRWMutex.cs" />
-        <Compile Include="Futex.cs" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <ProjectReference Include="..\Concurrency.Common\Concurrency.Common.csproj" />
     </ItemGroup>
 </Project>

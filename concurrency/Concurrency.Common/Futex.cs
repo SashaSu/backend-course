@@ -1,8 +1,6 @@
-﻿using System.Runtime.InteropServices;
-
-namespace a;
-
-public static class Futex
+﻿namespace Concurrency.Common;
+using System.Runtime.InteropServices;
+public class Futex
 {
     [DllImport("api-ms-win-core-synch-l1-2-0.dll",
         ExactSpelling = true)]
@@ -21,14 +19,20 @@ public static class Futex
         uint dwMilliseconds);
 
     [DllImport("api-ms-win-core-synch-l1-2-0.dll",
-        ExactSpelling = true)]
-    private static extern void WakeByAddressSingle(
-        ref uint Address);
+        ExactSpelling = true,
+        EntryPoint = "WakeByAddressSingle")]
+    private static extern void WakeByAddressSingleUInt(ref uint Address);
 
     [DllImport("api-ms-win-core-synch-l1-2-0.dll",
-        ExactSpelling = true)]
-    private static extern void WakeByAddressAll(
-        ref int Address);
+        ExactSpelling = true,
+        EntryPoint = "WakeByAddressAll")]
+    private static extern void WakeByAddressAllUInt(ref uint Address);
+
+    [DllImport("api-ms-win-core-synch-l1-2-0.dll",
+        ExactSpelling = true,
+        EntryPoint = "WakeByAddressAll")]
+    private static extern void WakeByAddressAllInt(ref int Address);
+
 
     public static void Wait(ref uint address, uint expected)
     {
@@ -54,11 +58,16 @@ public static class Futex
 
     public static void Wake(ref uint address)
     {
-        WakeByAddressSingle(ref address);
+        WakeByAddressSingleUInt(ref address);
+    }
+
+    public static void WakeAll(ref uint address)
+    {
+        WakeByAddressAllUInt(ref address);
     }
 
     public static void WakeAll(ref int address)
     {
-        WakeByAddressAll(ref address);
+        WakeByAddressAllInt(ref address);
     }
 }

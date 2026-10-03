@@ -1,13 +1,15 @@
 ﻿using System.Threading;
-using a;
+using Concurrency.Common;
 
-namespace DefaultNamespace;
+namespace Concurrency;
 
 public class MyRWMutex
 {
     private const uint WriterBit = 1u << 31;
     private const uint ReaderMask = ~WriterBit;
+
     private uint _state;
+    private int _writersWaiting;
 
     public void RLock()
     {
@@ -15,7 +17,7 @@ public class MyRWMutex
         {
             uint state = Volatile.Read(ref _state);
 
-            if ((state & WriterBit) != 0)
+            if ((state & WriterBit) != 0 || Volatile.Read(ref _writersWaiting) > 0)
             {
                 Futex.Wait(ref _state, state);
                 continue;
@@ -35,19 +37,19 @@ public class MyRWMutex
             uint state = Volatile.Read(ref _state);
 
             if ((state & WriterBit) != 0)
-                throw new Exception();
+                throw new SynchronizationLockException();
 
             uint readers = state & ReaderMask;
 
             if (readers == 0)
-                throw new Exception();
+                throw new SynchronizationLockException();
 
             uint newState = state - 1;
 
             if (Interlocked.CompareExchange(ref _state, newState, state) == state)
             {
                 if (readers == 1)
-                    Futex.Wake(ref _state);
+                    Futex.WakeAll(ref _state);
 
                 return;
             }
@@ -56,6 +58,8 @@ public class MyRWMutex
 
     public void Lock()
     {
+        Interlocked.Increment(ref _writersWaiting);
+
         while (true)
         {
             uint state = Volatile.Read(ref _state);
@@ -63,7 +67,10 @@ public class MyRWMutex
             if (state == 0)
             {
                 if (Interlocked.CompareExchange(ref _state, WriterBit, 0) == 0)
+                {
+                    Interlocked.Decrement(ref _writersWaiting);
                     return;
+                }
 
                 continue;
             }
@@ -75,8 +82,8 @@ public class MyRWMutex
     public void Unlock()
     {
         if (Interlocked.CompareExchange(ref _state, 0, WriterBit) != WriterBit)
-            throw new Exception();
+            throw new SynchronizationLockException();
 
-        Futex.Wake(ref _state);
+        Futex.WakeAll(ref _state);
     }
 }

@@ -1,6 +1,6 @@
 ﻿using SpinLock.Tests;
 
-namespace DefaultNamespace;
+namespace Concurrency;
 using System.Threading;
 
 public class MyTtasSpinlock: ILocker
@@ -18,12 +18,13 @@ public class MyTtasSpinlock: ILocker
 
     public void Lock()
     {
-        while (!TryLock()){ }
+        while (!TryLock())
+            Thread.SpinWait(4);
 
     }
 
     public void Unlock()
     {
-        if (Interlocked.Exchange(ref _state, 0) == 0) throw new Exception();
+        if (Interlocked.Exchange(ref _state, 0) == 0) throw new SynchronizationLockException("Нельзя освободить незахваченный мьютекс");
     }
 }

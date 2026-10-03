@@ -1,7 +1,7 @@
 ﻿namespace SpinLock.Tests;
-using DefaultNamespace;
+using Concurrency;
 using Xunit;
-using DefaultNamespace;
+using Concurrency;
 using Xunit;
 
 public class SpinLockTests
@@ -144,7 +144,7 @@ public class SpinLockTests
     {
         foreach (var l in GetLockers())
         {
-            Assert.Throws<Exception>(() => l.Unlock());
+            Assert.Throws<SynchronizationLockException>(() => l.Unlock());
         }
     }
 }

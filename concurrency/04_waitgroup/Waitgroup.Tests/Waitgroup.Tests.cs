@@ -1,5 +1,5 @@
 ﻿using System.Threading;
-using DefaultNamespace;
+using Concurrency;
 using Xunit;
 
 public class WaitgroupTests
@@ -134,7 +134,7 @@ public class WaitgroupTests
     {
         var wg = new MyWaitgroup();
 
-        Assert.Throws<Exception>(() => wg.Done());
+        Assert.Throws<InvalidOperationException>(() => wg.Done());
     }
 
     [Fact]

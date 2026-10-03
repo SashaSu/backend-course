@@ -1,7 +1,7 @@
 ﻿using System.Threading;
-using a;
+using Concurrency.Common;
 
-namespace DefaultNamespace;
+namespace Concurrency;
 
 public class MyOnce
 {

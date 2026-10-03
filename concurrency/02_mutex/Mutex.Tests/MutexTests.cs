@@ -1,4 +1,4 @@
-﻿using DefaultNamespace;
+﻿using Concurrency;
 using Xunit;
 
 public class MutexTests
@@ -158,7 +158,7 @@ public class MutexTests
     {
         var m = new MyMutex();
 
-        Assert.Throws<Exception>(() => m.Unlock());
+        Assert.Throws<SynchronizationLockException>(() => m.Unlock());
     }
 
     [Fact]

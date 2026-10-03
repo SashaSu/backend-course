@@ -1,5 +1,5 @@
 ﻿using System.Threading;
-using DefaultNamespace;
+using Concurrency;
 using Xunit;
 
 public class RwMutexTests
@@ -147,13 +147,13 @@ public class RwMutexTests
     public void UnlockWithoutLockPanics()
     {
         var rw = new MyRWMutex();
-        Assert.Throws<Exception>(() => rw.Unlock());
+        Assert.Throws<SynchronizationLockException>(() => rw.Unlock());
     }
 
     [Fact]
     public void RUnlockWithoutRLockPanics()
     {
         var rw = new MyRWMutex();
-        Assert.Throws<Exception>(() => rw.RUnlock());
+        Assert.Throws<SynchronizationLockException>(() => rw.RUnlock());
     }
 }

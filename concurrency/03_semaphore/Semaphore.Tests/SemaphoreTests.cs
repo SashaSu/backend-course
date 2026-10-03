@@ -1,4 +1,4 @@
-﻿using DefaultNamespace;
+﻿using Concurrency;
 
 namespace a;
 
@@ -173,5 +173,10 @@ public class SemaphoreTests
 
         Assert.True(tasks.All(t => t.IsCompleted),
             "не все ждущие проснулись");
+    }
+    [Fact]
+    public void NegativePermitsPanics()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() => new MySemaphore(-1));
     }
 }

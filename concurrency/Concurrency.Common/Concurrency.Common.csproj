@@ -1,16 +1,14 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
+
     <PropertyGroup>
-        <TargetFramework>net9.0</TargetFramework>
+        <TargetFramework>net8.0</TargetFramework>
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
         <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
     </PropertyGroup>
 
     <ItemGroup>
-        <Compile Include="MyOnce.cs" />
+        <Compile Include="Futex.cs" />
     </ItemGroup>
 
-    <ItemGroup>
-      <ProjectReference Include="..\Concurrency.Common\Concurrency.Common.csproj" />
-    </ItemGroup>
 </Project>
