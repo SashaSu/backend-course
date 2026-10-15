@@ -22,33 +22,36 @@ while (Console.ReadLine() is { } line)
     if (string.IsNullOrWhiteSpace(line))
         continue;
 
-    var parts = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+    var parts = line.Split(default(char[]), StringSplitOptions.RemoveEmptyEntries);
 
     if (parts.Length != 2)
     {
+        Console.WriteLine($"query {string.Join(' ', parts)}");
+        Console.WriteLine("status ERROR");
+        Console.WriteLine("end");
         Console.Error.WriteLine("Error: Expected a domain name and a record type");
+        Environment.ExitCode = 1;
         continue;
     }
 
     var name = parts[0];
-    var type = parts[1].ToUpperInvariant();
-    var normalizedName = name.TrimEnd('.').ToLowerInvariant();
-    var key = (normalizedName, type);
+    var type = parts[1];
+    var key = (Name: name.TrimEnd('.').ToLowerInvariant(), Type: type.ToUpperInvariant());
 
     Console.WriteLine($"query {name} {type}");
 
     try
     {
-        GetTypeCode(type);
-        EncodeName(name);
+        var typeCode = GetTypeCode(type);
+        var encodedName = EncodeName(name);
 
         if (cache.TryGetValue(key, out var cached))
         {
             if (Stopwatch.GetTimestamp() < cached.ExpiresAt)
             {
                 Console.WriteLine("status NOERROR");
-                foreach (var answer in cached.Answers)
-                    Console.WriteLine($"answer {answer.Type} {answer.Value} {answer.Ttl}");
+                foreach (var cachedAnswer in cached.Answers)
+                    Console.WriteLine($"answer {cachedAnswer.Type} {cachedAnswer.Value} {cachedAnswer.Ttl}");
                 Console.WriteLine("end");
                 continue;
             }
@@ -57,49 +60,18 @@ while (Console.ReadLine() is { } line)
         }
 
         var id = (ushort)RandomNumberGenerator.GetInt32(0, 65536);
-        var query = BuildQuery(id, name, type);
-        byte[] response = [];
-        var received = false;
-        var stopwatch = Stopwatch.StartNew();
+        var query = BuildQuery(id, encodedName, typeCode);
+        var expectedName = ReadName(encodedName, 0).Name;
+
+        (byte[] Data, int Offset)? reply;
 
         using (var client = new UdpClient(serverAddress.AddressFamily))
         {
             await client.SendAsync(query, server);
-
-            while (stopwatch.Elapsed < TimeSpan.FromSeconds(5))
-            {
-                var remaining = TimeSpan.FromSeconds(5) - stopwatch.Elapsed;
-                var receiveTask = client.ReceiveAsync();
-                var timeoutTask = Task.Delay(remaining);
-                var completed = await Task.WhenAny(receiveTask, timeoutTask);
-
-                if (completed == timeoutTask)
-                    break;
-
-                UdpReceiveResult result;
-
-                try
-                {
-                    result = await receiveTask;
-                }
-                catch (SocketException)
-                {
-                    continue;
-                }
-
-                if (!result.RemoteEndPoint.Equals(server) ||
-                    result.Buffer.Length < 12 ||
-                    ReadUInt16(result.Buffer, 0) != id ||
-                    (ReadUInt16(result.Buffer, 2) & 0x8000) == 0)
-                    continue;
-
-                response = result.Buffer;
-                received = true;
-                break;
-            }
+            reply = await ReceiveResponseAsync(client, server, id, expectedName, typeCode);
         }
 
-        if (!received)
+        if (reply is null)
         {
             Console.WriteLine("status TIMEOUT");
             Console.WriteLine("end");
@@ -107,19 +79,11 @@ while (Console.ReadLine() is { } line)
             continue;
         }
 
+        var (response, offset) = reply.Value;
         var flags = ReadUInt16(response, 2);
-        var questionCount = ReadUInt16(response, 4);
         var answerCount = ReadUInt16(response, 6);
         var status = GetStatus(flags);
-        var offset = 12;
-
-        for (var i = 0; i < questionCount; i++)
-        {
-            var question = ReadName(response, offset);
-            offset = question.NextOffset;
-            Ensure(offset + 4 <= response.Length, "Incomplete DNS question");
-            offset += 4;
-        }
+        var truncated = (flags & 0x0200) != 0;
 
         var answers = new List<DnsAnswer>();
         uint minTtl = uint.MaxValue;
@@ -164,7 +128,7 @@ while (Console.ReadLine() is { } line)
 
         Console.WriteLine("end");
 
-        if (status == "NOERROR" && answers.Count > 0 && !hasZeroTtl)
+        if (status == "NOERROR" && !truncated && answers.Count > 0 && !hasZeroTtl)
         {
             var expiresAt = Stopwatch.GetTimestamp()
                 + (long)(minTtl * (double)Stopwatch.Frequency);
@@ -172,12 +136,7 @@ while (Console.ReadLine() is { } line)
             cache[key] = new CacheEntry(answers, expiresAt);
         }
     }
-    catch (Exception ex) when (
-        ex is ArgumentException or
-        InvalidDataException or
-        IndexOutOfRangeException or
-        OverflowException or
-        FormatException)
+    catch (DnsException ex)
     {
         Console.WriteLine("status ERROR");
         Console.WriteLine("end");
@@ -186,7 +145,73 @@ while (Console.ReadLine() is { } line)
     }
 }
 
-static byte[] BuildQuery(ushort id, string name, string type)
+static async Task<(byte[] Data, int Offset)?> ReceiveResponseAsync(
+    UdpClient client, IPEndPoint server, ushort id, string expectedName, ushort typeCode)
+{
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
+    while (!cts.IsCancellationRequested)
+    {
+        UdpReceiveResult result;
+
+        try
+        {
+            result = await client.ReceiveAsync(cts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            return null;
+        }
+        catch (SocketException)
+        {
+            continue;
+        }
+
+        var data = result.Buffer;
+
+        if (!result.RemoteEndPoint.Equals(server) ||
+            data.Length < 12 ||
+            ReadUInt16(data, 0) != id ||
+            (ReadUInt16(data, 2) & 0x8000) == 0)
+            continue;
+
+        if (MatchQuestion(data, expectedName, typeCode) is { } answersOffset)
+            return (data, answersOffset);
+    }
+
+    return null;
+}
+
+static int? MatchQuestion(byte[] data, string expectedName, ushort typeCode)
+{
+    try
+    {
+        var count = ReadUInt16(data, 4);
+
+        if (count == 0)
+            return (ReadUInt16(data, 2) & 0x000F) != 0 ? 12 : null;
+
+        if (count != 1)
+            return null;
+
+        var question = ReadName(data, 12);
+        var end = question.NextOffset + 4;
+
+        if (end > data.Length ||
+            !string.Equals(question.Name, expectedName, StringComparison.OrdinalIgnoreCase) ||
+            ReadUInt16(data, question.NextOffset) != typeCode ||
+            ReadUInt16(data, question.NextOffset + 2) != 1)
+            return null;
+
+        return end;
+    }
+    catch (DnsException)
+    {
+        return null;
+    }
+}
+
+static byte[] BuildQuery(ushort id, byte[] encodedName, ushort typeCode)
 {
     using var stream = new MemoryStream();
     WriteUInt16(stream, id);
@@ -195,8 +220,8 @@ static byte[] BuildQuery(ushort id, string name, string type)
     WriteUInt16(stream, 0);
     WriteUInt16(stream, 0);
     WriteUInt16(stream, 0);
-    stream.Write(EncodeName(name));
-    WriteUInt16(stream, GetTypeCode(type));
+    stream.Write(encodedName);
+    WriteUInt16(stream, typeCode);
     WriteUInt16(stream, 1);
     return stream.ToArray();
 }
@@ -204,7 +229,10 @@ static byte[] BuildQuery(ushort id, string name, string type)
 static byte[] EncodeName(string name)
 {
     if (string.IsNullOrWhiteSpace(name) || name.Any(c => c > 127))
-        throw new ArgumentException("Invalid domain name");
+        throw new DnsException("Invalid domain name");
+
+    if (name == ".")
+        return [0];
 
     var normalized = name.EndsWith('.') ? name[..^1] : name;
     var labels = normalized.Split('.');
@@ -217,12 +245,12 @@ static byte[] EncodeName(string name)
         var bytes = Encoding.ASCII.GetBytes(label);
 
         if (bytes.Length is < 1 or > 63)
-            throw new ArgumentException("Invalid DNS label length");
+            throw new DnsException("Invalid DNS label length");
 
         totalLength += bytes.Length + 1;
 
         if (totalLength > 255)
-            throw new ArgumentException("Domain name is too long");
+            throw new DnsException("Domain name is too long");
 
         stream.WriteByte((byte)bytes.Length);
         stream.Write(bytes);
@@ -242,7 +270,7 @@ static ushort GetTypeCode(string type)
         "MX" => 15,
         "TXT" => 16,
         "AAAA" => 28,
-        _ => throw new ArgumentException($"Unsupported type: {type}")
+        _ => throw new DnsException($"Unsupported type: {type}")
     };
 }
 
@@ -255,7 +283,7 @@ static void WriteUInt16(Stream stream, ushort value)
 static void Ensure(bool condition, string message)
 {
     if (!condition)
-        throw new InvalidDataException(message);
+        throw new DnsException(message);
 }
 
 static ushort ReadUInt16(byte[] data, int offset)
@@ -272,6 +300,25 @@ static uint ReadUInt32(byte[] data, int offset)
          | ((uint)data[offset + 1] << 16)
          | ((uint)data[offset + 2] << 8)
          | data[offset + 3];
+}
+
+static string EscapeLabel(byte[] data, int start, int length)
+{
+    var builder = new StringBuilder(length);
+
+    for (var i = start; i < start + length; i++)
+    {
+        var b = data[i];
+
+        if (b is (byte)'.' or (byte)'\\')
+            builder.Append('\\').Append((char)b);
+        else if (b <= 0x20 || b >= 0x7F)
+            builder.Append('\\').Append(b.ToString("D3"));
+        else
+            builder.Append((char)b);
+    }
+
+    return builder.ToString();
 }
 
 static (string Name, int NextOffset) ReadName(
@@ -296,7 +343,7 @@ static (string Name, int NextOffset) ReadName(
         Ensure(current < limit, "Incomplete DNS name");
 
         if (jumps++ > 128)
-            throw new InvalidDataException("DNS name compression loop");
+            throw new DnsException("DNS name compression loop");
 
         var length = data[current];
 
@@ -328,7 +375,7 @@ static (string Name, int NextOffset) ReadName(
         Ensure(nameLength <= 255, "DNS name is too long");
 
         current++;
-        labels.Add(Encoding.ASCII.GetString(data, current, length));
+        labels.Add(EscapeLabel(data, current, length));
         current += length;
     }
 
@@ -379,14 +426,25 @@ static DnsAnswer ParseTxt(byte[] data, int offset, int length, uint ttl)
 {
     var end = offset + length;
     var current = offset;
-    var builder = new StringBuilder();
+    using var bytes = new MemoryStream();
 
     while (current < end)
     {
         var stringLength = data[current++];
         Ensure(current + stringLength <= end, "Invalid TXT record");
-        builder.Append(Encoding.UTF8.GetString(data, current, stringLength));
+        bytes.Write(data, current, stringLength);
         current += stringLength;
+    }
+
+    var text = Encoding.UTF8.GetString(bytes.ToArray());
+    var builder = new StringBuilder(text.Length);
+
+    foreach (var c in text)
+    {
+        if (char.IsControl(c) || c is '\u2028' or '\u2029')
+            builder.Append('\\').Append(((int)c).ToString("D3"));
+        else
+            builder.Append(c);
     }
 
     return new DnsAnswer("TXT", builder.ToString(), ttl);
@@ -407,3 +465,5 @@ static string GetStatus(ushort flags)
 
 record DnsAnswer(string Type, string Value, uint Ttl);
 record CacheEntry(List<DnsAnswer> Answers, long ExpiresAt);
+
+class DnsException(string message) : Exception(message);

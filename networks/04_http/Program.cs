@@ -5,18 +5,21 @@ using var memory = new MemoryStream();
 await Console.OpenStandardInput().CopyToAsync(memory);
 var data = memory.ToArray();
 
+string output;
+
 try
 {
-    var output = Parse(data);
-    Console.Out.Write(output);
-    Console.Out.Flush();
+    output = Parse(data);
 }
 catch (HttpParseException ex)
 {
-    Console.Out.Write($"error {ex.Reason}\n");
-    Console.Out.Flush();
+    output = $"error {ex.Reason}\n";
     Environment.ExitCode = 1;
 }
+
+using var stdout = Console.OpenStandardOutput();
+stdout.Write(Encoding.Latin1.GetBytes(output));
+stdout.Flush();
 
 static string Parse(byte[] data)
 {
@@ -30,7 +33,7 @@ static string Parse(byte[] data)
     if (firstLf != startLineEnd + 1)
         throw new HttpParseException("bad_start_line");
 
-    var firstLine = Encoding.ASCII.GetString(data[..startLineEnd]);
+    var firstLine = Encoding.Latin1.GetString(data[..startLineEnd]);
 
     if (firstLine.StartsWith("HTTP/", StringComparison.Ordinal))
     {
@@ -130,13 +133,10 @@ static byte[] ReadChunked(byte[] data, int pos)
         if (lineEnd < 0)
             throw new HttpParseException("bad_chunk");
 
-        var sizeText = Encoding.ASCII.GetString(data[pos..lineEnd]);
+        var sizeText = Encoding.Latin1.GetString(data[pos..lineEnd]);
         var semi = sizeText.IndexOf(';');
-
         if (semi >= 0)
-            sizeText = sizeText[..semi];
-
-        sizeText = sizeText.Trim(' ', '\t');
+            sizeText = sizeText[..semi].TrimEnd(' ', '\t');
 
         if (sizeText.Length == 0 || !sizeText.All(Uri.IsHexDigit) ||
             !ulong.TryParse(sizeText, NumberStyles.AllowHexSpecifier,
@@ -146,9 +146,13 @@ static byte[] ReadChunked(byte[] data, int pos)
         pos = lineEnd + 2;
 
         if (size == 0)
+        {
+            SkipTrailer(data, pos);
             return result.ToArray();
+        }
 
-        if (size > int.MaxValue || size > (ulong)(data.Length - pos - 2))
+        var remaining = data.Length - pos;
+        if (remaining < 2 || size > (ulong)(remaining - 2))
             throw new HttpParseException("bad_chunk");
 
         var chunkLength = (int)size;
@@ -159,6 +163,21 @@ static byte[] ReadChunked(byte[] data, int pos)
 
         result.Write(data, pos, chunkLength);
         pos = end + 2;
+    }
+}
+
+static void SkipTrailer(byte[] data, int pos)
+{
+    while (true)
+    {
+        var lineEnd = Find(data, [13, 10], pos);
+        if (lineEnd < 0)
+            throw new HttpParseException("bad_chunk");
+
+        if (lineEnd == pos)
+            return;
+
+        pos = lineEnd + 2;
     }
 }
 
@@ -179,7 +198,7 @@ static List<(string Name, string Value)> ParseHeaders(List<byte[]> lines)
         if (colon <= 0)
             throw new HttpParseException("bad_header");
 
-        var name = Encoding.ASCII.GetString(line[..colon]);
+        var name = Encoding.Latin1.GetString(line[..colon]);
 
         if (!name.All(IsTokenChar))
             throw new HttpParseException("bad_header");
@@ -217,7 +236,7 @@ static void ParseRequestLine(string line, StringBuilder sb)
         parts[0].Length == 0 ||
         !parts[0].All(IsTokenChar) ||
         parts[1].Length == 0 ||
-        parts[1].Any(c => c <= 0x20 || c == 0x7F) ||
+        parts[1].Any(c => c <= 0x20 || c >= 0x7F) ||
         parts[2] != "HTTP/1.1")
         throw new HttpParseException("bad_start_line");
 
@@ -240,7 +259,6 @@ static void ParseResponseLine(string line, StringBuilder sb)
 
     var status = rest[..3];
     var reason = rest.Length > 4 ? rest[4..] : "";
-
     if (reason.Any(c => (c < 0x20 && c != '\t') || c == 0x7F))
         throw new HttpParseException("bad_start_line");
 

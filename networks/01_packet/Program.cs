@@ -70,8 +70,9 @@ try
 
         int transport = ip + ihlBytes;
         int ipPayloadLength = totalLength - ihlBytes;
+        bool firstFragment = (flagsAndOffset & 0x1fff) == 0;
 
-        if (protocol == 6)
+        if (protocol == 6 && firstFragment)
         {
             Ensure(ipPayloadLength >= 20, "Incomplete TCP");
 
@@ -95,7 +96,7 @@ try
             output.AppendLine($"tcp.window {window}");
             output.AppendLine($"payload.length {ipPayloadLength - dataOffsetBytes}");
         }
-        else if (protocol == 17)
+        else if (protocol == 17 && firstFragment)
         {
             Ensure(ipPayloadLength >= 8, "Incomplete UDP");
 
@@ -122,11 +123,6 @@ try
 catch (PacketException ex)
 {
     Console.Error.WriteLine($"Error: {ex.Message}");
-    Environment.ExitCode = 1;
-}
-catch (FormatException)
-{
-    Console.Error.WriteLine("Error: Invalid hex");
     Environment.ExitCode = 1;
 }
 

@@ -1,6 +1,7 @@
 ﻿using System.Globalization;
 using System.Net;
 using System.Net.Http.Headers;
+using System.Net.Sockets;
 
 if (args.Length == 0)
 {
@@ -74,6 +75,15 @@ if (method.Length == 0 || !method.All(IsTokenChar))
     return;
 }
 
+if (idempotencyKey != null && !IsValidHeaderValue(idempotencyKey))
+{
+    Console.Error.WriteLine(
+        "Error: Invalid idempotency key: expected non-empty printable ASCII " +
+        "without leading or trailing spaces");
+    Environment.ExitCode = 1;
+    return;
+}
+
 var canRetryMethod = IsIdempotentMethod(method) || idempotencyKey != null;
 var success = false;
 var attempts = 0;
@@ -123,7 +133,7 @@ for (var attempt = 1; attempt <= maxAttempts; attempt++)
         Console.WriteLine($"sleep_ms {delay}");
         await Task.Delay(delay);
     }
-    catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+    catch (Exception ex) when (IsNetworkError(ex))
     {
         Console.WriteLine($"attempt {attempt} error {GetErrorText(ex)}");
 
@@ -133,6 +143,11 @@ for (var attempt = 1; attempt <= maxAttempts; attempt++)
         var delay = GetDelay(attempt + 1, null);
         Console.WriteLine($"sleep_ms {delay}");
         await Task.Delay(delay);
+    }
+    catch (HttpRequestException ex)
+    {
+        Console.WriteLine($"attempt {attempt} error {GetErrorText(ex)}");
+        break;
     }
 }
 
@@ -147,17 +162,39 @@ static bool IsTokenChar(char c) =>
     (c >= 'A' && c <= 'Z') ||
     (c >= '0' && c <= '9') ||
     "!#$%&'*+-.^_`|~".Contains(c);
+static bool IsValidHeaderValue(string value) =>
+    value.Length > 0 &&
+    value.All(c => c >= 0x20 && c <= 0x7E) &&
+    value[0] != ' ' &&
+    value[^1] != ' ';
 
 static bool ShouldRetry(int statusCode) =>
     statusCode is 429 or 500 or 502 or 503 or 504;
+
+static bool IsNetworkError(Exception ex)
+{
+    if (ex is TaskCanceledException)
+        return true;
+
+    if (ex is not HttpRequestException http)
+        return false;
+
+    if (http.HttpRequestError is
+        HttpRequestError.ConnectionError or
+        HttpRequestError.NameResolutionError or
+        HttpRequestError.ResponseEnded or
+        HttpRequestError.InvalidResponse or
+        HttpRequestError.HttpProtocolError)
+        return true;
+
+    return http.HttpRequestError == HttpRequestError.Unknown &&
+           http.InnerException is SocketException or IOException;
+}
 
 static int GetDelay(int attempt, RetryConditionHeaderValue? retryAfter)
 {
     if (retryAfter?.Delta is { } delta)
         return ClampDelay(delta.TotalMilliseconds);
-
-    if (retryAfter?.Date is { } date)
-        return ClampDelay((date - DateTimeOffset.UtcNow).TotalMilliseconds);
 
     var interval = Math.Min(2000, 200 * Math.Pow(2, attempt - 1));
     return Random.Shared.Next(0, (int)interval + 1);
@@ -174,4 +211,10 @@ static int ClampDelay(double milliseconds)
     return (int)Math.Ceiling(milliseconds);
 }
 
-static string GetErrorText(Exception ex) =>ex is TaskCanceledException ? "timeout" : ex.Message;
+static string GetErrorText(Exception ex)
+{
+    if (ex is TaskCanceledException)
+        return "timeout";
+    var text = string.Join(' ', ex.Message.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
+    return text.Length == 0 ? "connection error" : text;
+}
