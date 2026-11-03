@@ -5,3 +5,9 @@
 -- Порядок: joined_at по возрастанию, при равенстве nickname по возрастанию
 -- Строк:   86
 
+SELECT p.nickname, p.country, p.mmr, t.name AS team_name, tm.joined_at
+FROM team_members AS tm
+         JOIN players AS p ON p.player_id = tm.player_id
+         JOIN teams AS t ON t.team_id = tm.team_id
+WHERE tm.left_at IS NULL
+ORDER BY tm.joined_at ASC, p.nickname ASC;

@@ -6,3 +6,21 @@
 -- Порядок: teams_count по убыванию, при равенстве player по возрастанию
 -- Строк:   25
 
+WITH player_teams AS (SELECT player_id, COUNT(DISTINCT team_id) AS teams_count
+                      FROM team_members
+                      GROUP BY player_id
+                      HAVING COUNT(DISTINCT team_id) > 1),
+     current_teams AS (SELECT player_id, team_id
+                       FROM team_members
+                       WHERE left_at IS NULL)
+SELECT p.nickname AS player,
+       p.country,
+       pt.teams_count,
+       t.name     AS current_team,
+       s.nickname AS streamer
+FROM player_teams AS pt
+         JOIN players AS p ON p.player_id = pt.player_id
+         LEFT JOIN current_teams AS ct ON ct.player_id = p.player_id
+         LEFT JOIN teams AS t ON t.team_id = ct.team_id
+         LEFT JOIN streamers AS s ON s.player_id = p.player_id
+ORDER BY pt.teams_count DESC, player ASC;

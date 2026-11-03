@@ -6,3 +6,9 @@
 -- Порядок: started_at по возрастанию
 -- Строк:   78
 
+SELECT match_id, started_at, duration_sec, winner
+FROM matches
+WHERE started_at >= TIMESTAMPTZ '2024-01-01 00:00:00+00'
+  AND started_at <  TIMESTAMPTZ '2025-01-01 00:00:00+00'
+  AND duration_sec > 3600
+ORDER BY started_at ASC;
